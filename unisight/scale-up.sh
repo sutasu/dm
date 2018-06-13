@@ -1,6 +1,7 @@
 #!/bin/bash
 # usage: job_ids job_slots queue_available_slots queue_total_slots queue_reserved_slots queue_names
 
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 QUEUE=all.q
 TORTUGA_ROOT=/opt/tortuga
 HARDWARE_PROFILE=aws
@@ -9,6 +10,7 @@ SLOTS_ON_EXECD=2
 LOCAL_PATH_COMPLEX=path
 SYNC_BACK_PATH_COMPLEX=sync_back
 SGE_LOCAL_STORAGE_ROOT=/tmp/sge_data
+#RSYNC="sudo su - sge -c "
 
 ASYNC=0
 RSYNC_PIDS=()
@@ -47,7 +49,7 @@ if [ $total_slots -le 0 ]; then
   echo "Do not scale up, new slots requested: $total_slots, already available: $free_slots"
   # get nodes with free slots
   #qstat -f | awk '/all.q/ {printf("%s %s",$1,$3)}' | 
-if
+fi
 
 new_nodes=$((total_slots / SLOTS_ON_EXECD))
 extra=$((total_slots - new_nodes * SLOTS_ON_EXECD))
@@ -57,8 +59,9 @@ if [ $extra -gt 0 ]; then
 fi
 echo "new_nodes=$new_nodes"
 
-if true; then
+if false; then
   echo "Adding $new_nodes new nodes"
+  ret=0
 else
   request_id=$(set -o pipefail; \
     $TORTUGA_ROOT/bin/add-nodes \
@@ -82,18 +85,22 @@ for job_id in ${job_ids[@]}; do
   hard_list=$(qstat -j $job_id | awk '/hard resource_list/ {print $3}')
   hard_list_arr=(${hard_list//,/ })
   for hl in ${hard_list_arr[@]}; do
-    if [[ $hl = "$LOCAL_PATH_COMPLEX"* ]; then
+    if [[ $hl = "$LOCAL_PATH_COMPLEX"* ]]; then
       path="${hl##*=}"
       paths_from+=($path)
       path_to="${path//\//_}"
       paths_to+=($path_to)
       job_ids_with_data+=($job_id)
     fi
-    if [[ $hl = "$SYNC_BACK_PATH_COMPLEX"* ]; then
+    if [[ $hl = "$SYNC_BACK_PATH_COMPLEX"* ]]; then
       echo "sync_back"
     fi
   done  
 done
+
+echo "job_ids_with_data=${job_ids_with_data[@]}"
+echo "paths_from=${paths_from[@]}"
+echo "paths_to=${paths_to[@]}"
 
 # calculate data hashes
 #for path in ${paths_from[@]}; do
@@ -106,15 +113,37 @@ while get-node-requests -r $request_id | fgrep pending ; do
   sleep 1
 done
 
-# transfer data
+
 data_total=${#paths_from[@]}
 new_nodes=($(get-node-requests -r $request_id | tail -n +2))
+
+sleep 60
+
+#new_nodes_copy=(${new_nodes[@]})
+# transfer data
+#max_cnt=10
+#for((cnt=0;cnt<max_cnt;++cnt)) { 
+#  tmp=()
+
 new_nodes_total=${#new_nodes[@]}
 node_cnt=0
+#initial_check=1
+
 for ((data_cnt=0; data_cnt<data_total; data_cnt++)) {
   if [ $node_cnt -ge $new_nodes_total ]; then
     node_cnt=0
+#    initial_check=0
   fi
+#  if [ $initial_check -eq 1 ]; then
+#    echo "Checking if ssh is available for $node"
+#    ssh -q -o "BatchMode=yes" sge@$node "echo 2>&1"
+#    if [ $? -ne 0 ]; then
+#      echo "ssh not available on $node yet"
+#      sleep 1
+#    else
+#      echo "ssh available on $node"
+#    fi
+#  fi 
   data_path=${paths_from[$data_cnt]}
   node=${new_nodes[$node_cnt]}
   #hash=${hashes[$data_cnt]}
@@ -125,31 +154,35 @@ for ((data_cnt=0; data_cnt<data_total; data_cnt++)) {
       $data_path sge@$node:$path_to/ &
     RSYNC_PIDS+=($!)
   else
-    rsync -avzhe "ssh -o StrictHostKeyChecking=no" \
-      --rsync-path="mkdir -p $SGE_LOCAL_STORAGE_ROOT/$path_to && rsync" \
-      $data_path sge@$node:$path_to/
+    echo "Transferring data from $data_path to sge@$node:$path_to/"
+    sudo su - sge -c "rsync -avzhe \"ssh -o StrictHostKeyChecking=no\" \
+      --rsync-path=\"mkdir -p $SGE_LOCAL_STORAGE_ROOT/$path_to && rsync\" \
+      $data_path sge@$node:$SGE_LOCAL_STORAGE_ROOT/$path_to/"
     ret=$?
     if [ $ret -ne 0 ]; then
       echo "error code from rsync: $ret"
     fi
   fi
   node_cnt=$((node_cnt + 1))
-done
+}
 
 # prepare load sensor
-sudo sed "s|%%SGE_STORAGE_ROOT%%|$SGE_LOCAL_STORAGE_ROOT|; s|%%SGE_COMPLEX_NAME%%|$LOCAL_PATH_COMPLEX|" > load_sensor.sh > /tmp/lls.sh
+sed "s|%%SGE_STORAGE_ROOT%%|$SGE_LOCAL_STORAGE_ROOT|; s|%%SGE_COMPLEX_NAME%%|$LOCAL_PATH_COMPLEX|" $SCRIPT_DIR/load-sensor.sh > /tmp/lls.sh
 
 # wait for UGE become available on compute nodes
 # install load sensor
-max_cnt=100
+max_cnt=10
 max_err_cnt=$((10 * new_node_total))
 err_cnt=0
 new_nodes_copy=("${new_nodes[@]}")
-for((cnt=0;cnt<$max_cnt;++cnt)) { 
+for((cnt=0;cnt<max_cnt;++cnt)) { 
   tmp=()
   for node in ${new_nodes_copy[@]}; do
+    echo "Waiting for UGE on $node"
+    node_short=${node%%.*}
   #  for((i=0;i<new_nodes_total;++i)); do
-    if [ -z "$(qstat -f | grep $node)" ]; then
+#    if [ -z "$(qstat -f | grep $node)" ]; then
+    if ! qstat -f | grep $node_short ; then
       echo "No execd on $node yet"
       err_cnt=$((err_cnt + 1))
       if [ $err_cnt -gt $max_err_cnt ]; then
@@ -159,10 +192,11 @@ for((cnt=0;cnt<$max_cnt;++cnt)) {
       tmp+=($node)
       continue
     fi
-    if [ -z "$(qstat -f -qs u | grep $node)" ]; then
+#    if [ -z "$(qstat -f -qs u | grep $node)" ]; then
+    if ! qstat -f -qs u | grep $node_short ; then
       echo "Adding load sensor on $node"
       # install load sensor
-      scp -o StrictHostKeyChecking=no /tmp/lls.sh sge@$node:$SGE_ROOT/$SGE_CELL
+      scp -o StrictHostKeyChecking=no /tmp/lls.sh sge@${node}:${SGE_ROOT}/${SGE_CELL}
       ret=$?
       if [ $ret -ne 0 ]; then
         echo "Error installing load sensor: scp exit code: $ret"
@@ -185,5 +219,6 @@ for((cnt=0;cnt<$max_cnt;++cnt)) {
     echo "Too many attempts waiting for UGE become ready on new nodes"
     break
   fi
+  sleep 1
 }
 
