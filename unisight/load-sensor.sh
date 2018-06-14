@@ -11,9 +11,9 @@ ls_log_file=/tmp/ls.dbg
 # uncomment this to log load sensor startup  
 #echo `date`:$$:I:load sensor `basename $0` started >> $ls_log_file
 
-SGE_CACHE_DATA_DIR=%%SGE_CACHE_DATA_DIR%%
+SGE_STORAGE_ROOT=%%SGE_STORAGE_ROOT%%
 #mkdir -p $SGE_CACHE_DATA_DIR
-cd $SGE_CACHE_DATA_DIR
+cd $SGE_STORAGE_ROOT
 
 SGE_COMPLEX_NAME=%%SGE_COMPLEX_NAME%%
 
@@ -44,10 +44,11 @@ while [ $end = false ]; do
    #
    complex=
    for d in $(find * -maxdepth 0 -mindepth 0); do
+      v=${d//_/\/}
       if [ -z "$complex" ]; then
-         complex=${d//_/\/}
+         complex=$v
       else
-         complex="${complex},${dd}"
+         complex="${complex},${v}"
       fi
    done
    echo "$HOST:$SGE_COMPLEX_NAME:$complex"

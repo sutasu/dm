@@ -1,6 +1,7 @@
 #!/bin/bash
 # usage: job_ids job_slots queue_available_slots queue_total_slots queue_reserved_slots queue_names
 
+
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 QUEUE=all.q
 TORTUGA_ROOT=/opt/tortuga
@@ -10,6 +11,7 @@ SLOTS_ON_EXECD=2
 LOCAL_PATH_COMPLEX=path
 SYNC_BACK_PATH_COMPLEX=sync_back
 SGE_LOCAL_STORAGE_ROOT=/tmp/sge_data
+LOAD_SENSOR_DIR=$SGE_ROOT/setup
 #RSYNC="sudo su - sge -c "
 
 ASYNC=0
@@ -117,7 +119,7 @@ done
 data_total=${#paths_from[@]}
 new_nodes=($(get-node-requests -r $request_id | tail -n +2))
 
-sleep 60
+#sleep 60
 
 #new_nodes_copy=(${new_nodes[@]})
 # transfer data
@@ -126,6 +128,7 @@ sleep 60
 #  tmp=()
 
 new_nodes_total=${#new_nodes[@]}
+ssh_available=($(for i in $(seq 1 $new_nodes_total); do echo 0; done))
 node_cnt=0
 #initial_check=1
 
@@ -134,18 +137,23 @@ for ((data_cnt=0; data_cnt<data_total; data_cnt++)) {
     node_cnt=0
 #    initial_check=0
   fi
-#  if [ $initial_check -eq 1 ]; then
-#    echo "Checking if ssh is available for $node"
-#    ssh -q -o "BatchMode=yes" sge@$node "echo 2>&1"
-#    if [ $? -ne 0 ]; then
-#      echo "ssh not available on $node yet"
-#      sleep 1
-#    else
-#      echo "ssh available on $node"
-#    fi
-#  fi 
-  data_path=${paths_from[$data_cnt]}
+  echo "data_cnt=$data_cnt, node_cnt=$node_cnt"
   node=${new_nodes[$node_cnt]}
+  if [ ${ssh_available[$node_cnt]} -eq 0 ]; then
+    echo "Checking if ssh is available for $node"
+    sudo su - sge -c "ssh -q -o \"BatchMode=yes\" sge@$node \"echo 2>&1\""
+    if [ $? -ne 0 ]; then
+      echo "ssh not available on $node yet"
+      data_cnt=$((data_cnt - 1))
+      node_cnt=$((node_cnt + 1))
+      sleep 5
+      continue
+    else
+      ssh_available[$node_cnt]=1
+      echo "ssh available on $node"
+    fi
+  fi
+  data_path=${paths_from[$data_cnt]}
   #hash=${hashes[$data_cnt]}
   path_to=${paths_to[$data_cnt]}
   if [ $ASYNC -eq 1 ]; then
@@ -168,6 +176,7 @@ for ((data_cnt=0; data_cnt<data_total; data_cnt++)) {
 
 # prepare load sensor
 sed "s|%%SGE_STORAGE_ROOT%%|$SGE_LOCAL_STORAGE_ROOT|; s|%%SGE_COMPLEX_NAME%%|$LOCAL_PATH_COMPLEX|" $SCRIPT_DIR/load-sensor.sh > /tmp/lls.sh
+chmod a+x /tmp/lls.sh
 
 # wait for UGE become available on compute nodes
 # install load sensor
@@ -196,14 +205,14 @@ for((cnt=0;cnt<max_cnt;++cnt)) {
     if ! qstat -f -qs u | grep $node_short ; then
       echo "Adding load sensor on $node"
       # install load sensor
-      scp -o StrictHostKeyChecking=no /tmp/lls.sh sge@${node}:${SGE_ROOT}/${SGE_CELL}
+      sudo su - sge -c "scp -o StrictHostKeyChecking=no /tmp/lls.sh sge@${node}:${LOAD_SENSOR_DIR}"
       ret=$?
       if [ $ret -ne 0 ]; then
         echo "Error installing load sensor: scp exit code: $ret"
       fi
       hf=/tmp/$node
       qconf -sconf $node > $hf
-      echo "load_sensor $SGE_ROOT/$SGE_CELL/lls.sh" >> $hf
+      echo "load_sensor $LOAD_SENSOR_DIR/lls.sh" >> $hf
       qconf -Mconf $hf
     else
       echo "UGE on $node is still in 'u' state"
