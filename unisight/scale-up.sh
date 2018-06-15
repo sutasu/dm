@@ -1,5 +1,5 @@
 #!/bin/bash
-# usage: job_ids job_slots queue_available_slots queue_total_slots queue_reserved_slots queue_names
+# usage: job_ids job_slots job_users queue_available_slots queue_total_slots queue_reserved_slots queue_names
 
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -33,7 +33,10 @@ if [ $job_cnt -ne $slot_cnt ]; then
   exit 1
 fi
 
-free_slots_array=(${3//,/ })
+users=(${3//,/ })
+echo "users=${users[@]}"
+
+free_slots_array=(${4//,/ })
 free_slots=0
 for s in ${free_slots_array[@]}; do
   free_slots=$((free_slots + s))
@@ -82,33 +85,41 @@ fi
 job_ids_with_data=()
 paths_from=()
 paths_to=()
-#hashes=()
 for job_id in ${job_ids[@]}; do
   hard_list=$(qstat -j $job_id | awk '/hard resource_list/ {print $3}')
   hard_list_arr=(${hard_list//,/ })
+  qalter_adds=
   for hl in ${hard_list_arr[@]}; do
     if [[ $hl = "$LOCAL_PATH_COMPLEX"* ]]; then
-      path="${hl##*=}"
+#      path="${hl##*=}"
+      path="${hl##*=\*}"
+      path="${path%%\*}"
       paths_from+=($path)
       path_to="${path//\//_}"
       paths_to+=($path_to)
+      path_from_flag=1
       job_ids_with_data+=($job_id)
-    fi
-    if [[ $hl = "$SYNC_BACK_PATH_COMPLEX"* ]]; then
-      echo "sync_back"
+    elif [[ $hl = "$SYNC_BACK_PATH_COMPLEX"* ]]; then
+      echo "sync_back: $hl"
+      path="${hl##*=\*}"
+      path_from="${path%%:*}"
+      if [ ! -z "$path_from" ]; then
+        qalter_adds="-adds v SGE_DATA_OUT $path_from"
+        path_to="${path##*:}"
+	if [ ! -z "$path_to" ]; then
+	  qalter_adds="$qalter_adds -adds v SGE_DATA_OUT_BACK $path_to"
+      fi
     fi
   done  
+  if [ ! -z "$qalter_adds" ]; then
+    echo "qalter $qalter_adds $job_id"
+    qalter $qalter_adds $job_id
+  fi
 done
 
 echo "job_ids_with_data=${job_ids_with_data[@]}"
 echo "paths_from=${paths_from[@]}"
 echo "paths_to=${paths_to[@]}"
-
-# calculate data hashes
-#for path in ${paths_from[@]}; do
-#  hash=$(find $SGE_DATA_IN -type f -exec md5sum {} \; | sort | md5sum | awk '{print $1}')
-#  hashes+=(hash)
-#done
   
 while get-node-requests -r $request_id | fgrep pending ; do
   echo "Waiting for nodes to boot"
@@ -119,23 +130,14 @@ done
 data_total=${#paths_from[@]}
 new_nodes=($(get-node-requests -r $request_id | tail -n +2))
 
-#sleep 60
-
-#new_nodes_copy=(${new_nodes[@]})
-# transfer data
-#max_cnt=10
-#for((cnt=0;cnt<max_cnt;++cnt)) { 
-#  tmp=()
-
 new_nodes_total=${#new_nodes[@]}
 ssh_available=($(for i in $(seq 1 $new_nodes_total); do echo 0; done))
 node_cnt=0
-#initial_check=1
 
+# transfer data
 for ((data_cnt=0; data_cnt<data_total; data_cnt++)) {
   if [ $node_cnt -ge $new_nodes_total ]; then
     node_cnt=0
-#    initial_check=0
   fi
   echo "data_cnt=$data_cnt, node_cnt=$node_cnt"
   node=${new_nodes[$node_cnt]}
