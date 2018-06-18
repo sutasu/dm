@@ -1,12 +1,24 @@
 #/bin/bash
-set -x 
+set -x
+RSYNC_HOME_MODULE=home
+RSYNC_SHARED_MODULE=shared
 echo "Epilog $(date)"
 
 if [ ! -z "$SGE_DATA_OUT" ]; then
   if [ -d $SGE_DATA_OUT ]; then
-    rsync -avzhe "ssh -o StrictHostKeyChecking=no" $SGE_DATA_OUT $SGE_O_LOGNAME@$SGE_O_HOST:$SGE_DATA_OUT_BACK/
+#    rsync -avzhe "ssh -o StrictHostKeyChecking=no" $SGE_DATA_OUT $SGE_O_LOGNAME@$SGE_O_HOST:$SGE_DATA_OUT_BACK/
+    module=
+    if [ -z $SGE_DATA_OUT_BACK ]; then
+      SGE_DATA_OUT_BACK=/home/$SGE_O_LOGNAME
+      module=$RSYNC_HOME_MODULE
+      echo "Epilog $(date): transfer data back: home used: $SGE_DATA_OUT_BACK"
+    else
+      module=$RSYNC_SHARED_MODULE
+    fi
+    rsync -rtv $SGE_STDERR_PATH $SGE_STDOUT_PATH $SGE_DATA_OUT rsync://ugersync@$SGE_O_HOST/$module/$SGE_DATA_OUT_BACK/
     if [ $? -ne 0 ]; then
-      echo "Epilog $(date): rsync error."
+      echo "Epilog $(date): rsync error transferring data back from remote directory $SGE_DATA_OUT to local $SGE_DATA_OUT_BACK"
+      echo "local directory $SGE_DATA_OUT_BACK has to exist and have write prmissions for all"
     fi
   else
     echo "Epilog $(date): no output directory: $SGE_DATA_OUT"

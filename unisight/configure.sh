@@ -8,6 +8,7 @@ COMPLEX_NAME=path
 clean() {
   rm -rf $SGE_USER_HOME/.ssh
   rm -f /etc/puppetlabs/code/environments/production/modules/sge_ssh_key/manifests/init.pp
+  pkill -f "rsync --daemon"
 }
 
 FORCE=0
@@ -54,6 +55,71 @@ classes:
 EOF
 else
   echo "sge puppet module is already in hiera"
+fi
+
+if true; then
+  sudo yum install rsync
+  cat > /etc/rsyncd.conf <<EOF
+[home]
+        path = /home
+        comment = home
+        read only = no
+        write only = yes
+        uid = $(id -u sge)
+        gid = $(id -g sge)
+        incoming chmod = a+w
+        auth users = ugersync
+        secrets file = /etc/rsyncd.secrets
+[shared]
+        path = /tmp/sge_shared
+        comment = shared
+        read only = no
+        write only = yes
+        uid = $(id -u sge)
+        gid = $(id -g sge)
+        incoming chmod = a+w
+        auth users = ugersync
+        secrets file = /etc/rsyncd.secrets
+EOF
+  cat > /etc/rsyncd.secrets <<EOF
+ugersync:ugersync
+EOF
+  sudo chmod 600 /etc/rsyncd.secrets
+  rsync --daemon
+  echo "Started rsync daemon"
+else
+# install rsyncd in installer node
+pusudo chmod 600 /etc/ppet module install puppetlabs-rsync --version 1.1.0
+if [ ! -f /etc/puppetlabs/code/environments/production/modules/rsyncd/manifests/init.pp ]; then
+  mkdir -p /etc/puppetlabs/code/environments/production/modules/rsyncd/manifests
+  cat > /etc/puppetlabs/code/environments/production/modules/rsyncd/manifests/init.pp <<EOF
+rsync::server::module{ 'rsyncd_home':
+  path    => \$base,
+  require => File[\$base],
+}
+rsync::server::module{ 'rsyncd_scratch':
+  path    => \$base,
+  require => File[\$base],
+}
+EOF
+else
+  echo "rsyncd puppet module already exists"
+fi
+# add rsyncd variables to hiera
+if ! grep 'rsync::server::modules' /etc/puppetlabs/code/environments/production/hiera.yaml; then
+cat >> /etc/puppetlabs/code/environments/production/hiera.yaml <<EOF
+rsync::server::modules:
+  rsyncd_home:
+    path: /home
+    incoming_chmod: false
+    outgoing_chmod: false
+  rsyncd_scratch:
+    path: /tmp
+    read_only: false
+EOF
+else
+  echo "rsync is already in hiera"
+fi
 fi
 
 # add complex

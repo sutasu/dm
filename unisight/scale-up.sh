@@ -108,6 +108,7 @@ for job_id in ${job_ids[@]}; do
         path_to="${path##*:}"
 	if [ ! -z "$path_to" ]; then
 	  qalter_adds="$qalter_adds -adds v SGE_DATA_OUT_BACK $path_to"
+        fi
       fi
     fi
   done  
@@ -182,7 +183,7 @@ chmod a+x /tmp/lls.sh
 
 # wait for UGE become available on compute nodes
 # install load sensor
-max_cnt=10
+max_cnt=100
 max_err_cnt=$((10 * new_node_total))
 err_cnt=0
 new_nodes_copy=("${new_nodes[@]}")
