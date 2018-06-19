@@ -1,5 +1,12 @@
 #!/bin/bash
-# usage: job_ids job_slots job_users queue_available_slots queue_total_slots queue_reserved_slots queue_names
+# positional parameters:
+# job_ids
+# job_slots
+# job_users
+# queue_available_slots
+# queue_total_slots
+# queue_reserved_slots
+# queue_names
 
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -85,38 +92,44 @@ fi
 job_ids_with_data=()
 paths_from=()
 paths_to=()
-for job_id in ${job_ids[@]}; do
+for ((cnt=0; cnt<${#job_ids[@]}; ++cnt)) {
+  job_id=${job_ids[$cnt]}
+  user=${users[$cnt]}
+#for job_id in ${job_ids[@]}; do
   hard_list=$(qstat -j $job_id | awk '/hard resource_list/ {print $3}')
   hard_list_arr=(${hard_list//,/ })
-  qalter_adds=
+  qalter_params=
   for hl in ${hard_list_arr[@]}; do
     if [[ $hl = "$LOCAL_PATH_COMPLEX"* ]]; then
 #      path="${hl##*=}"
       path="${hl##*=\*}"
       path="${path%%\*}"
       paths_from+=($path)
-      path_to="${path//\//_}"
+#      path_to="${path//\//_}"
+      path_to=$SGE_LOCAL_STORAGE_ROOT/$user/$(echo $path | base64)
       paths_to+=($path_to)
-      path_from_flag=1
       job_ids_with_data+=($job_id)
+      qalter_params="$qalter_params -adds v SGE_DATA_IN $path_to"
     elif [[ $hl = "$SYNC_BACK_PATH_COMPLEX"* ]]; then
       echo "sync_back: $hl"
-      path="${hl##*=\*}"
+      path="${hl#*=}"
       path_from="${path%%:*}"
       if [ ! -z "$path_from" ]; then
-        qalter_adds="-adds v SGE_DATA_OUT $path_from"
+        qalter_params="$qalter_params -adds v SGE_DATA_OUT $path_from"
         path_to="${path##*:}"
 	if [ ! -z "$path_to" ]; then
-	  qalter_adds="$qalter_adds -adds v SGE_DATA_OUT_BACK $path_to"
+	  qalter_params="$qalter_params -adds v SGE_DATA_OUT_BACK $path_to"
         fi
       fi
+      qalter_params="$qalter_params -clears l_hard $SYNC_BACK_PATH_COMPLEX"
     fi
   done  
-  if [ ! -z "$qalter_adds" ]; then
-    echo "qalter $qalter_adds $job_id"
-    qalter $qalter_adds $job_id
+  if [ ! -z "$qalter_params" ]; then
+    echo "qalter $qalter_params $job_id"
+    qalter $qalter_params $job_id
   fi
-done
+#done
+}
 
 echo "job_ids_with_data=${job_ids_with_data[@]}"
 echo "paths_from=${paths_from[@]}"
@@ -144,7 +157,7 @@ for ((data_cnt=0; data_cnt<data_total; data_cnt++)) {
   node=${new_nodes[$node_cnt]}
   if [ ${ssh_available[$node_cnt]} -eq 0 ]; then
     echo "Checking if ssh is available for $node"
-    sudo su - sge -c "ssh -q -o \"BatchMode=yes\" sge@$node \"echo 2>&1\""
+    sudo su - sge -c "ssh -q -o \"BatchMode=yes\" -o \"ConnectTimeout=5\" sge@$node \"echo 2>&1\""
     if [ $? -ne 0 ]; then
       echo "ssh not available on $node yet"
       data_cnt=$((data_cnt - 1))
@@ -157,7 +170,6 @@ for ((data_cnt=0; data_cnt<data_total; data_cnt++)) {
     fi
   fi
   data_path=${paths_from[$data_cnt]}
-  #hash=${hashes[$data_cnt]}
   path_to=${paths_to[$data_cnt]}
   if [ $ASYNC -eq 1 ]; then
     rsync -avzhe "ssh -o StrictHostKeyChecking=no" \
@@ -167,8 +179,8 @@ for ((data_cnt=0; data_cnt<data_total; data_cnt++)) {
   else
     echo "Transferring data from $data_path to sge@$node:$path_to/"
     sudo su - sge -c "rsync -avzhe \"ssh -o StrictHostKeyChecking=no\" \
-      --rsync-path=\"mkdir -p $SGE_LOCAL_STORAGE_ROOT/$path_to && rsync\" \
-      $data_path sge@$node:$SGE_LOCAL_STORAGE_ROOT/$path_to/"
+      --rsync-path=\"mkdir -p $path_to && rsync\" \
+      $data_path sge@$node:$path_to/"
     ret=$?
     if [ $ret -ne 0 ]; then
       echo "error code from rsync: $ret"
@@ -206,17 +218,19 @@ for((cnt=0;cnt<max_cnt;++cnt)) {
     fi
 #    if [ -z "$(qstat -f -qs u | grep $node)" ]; then
     if ! qstat -f -qs u | grep $node_short ; then
-      echo "Adding load sensor on $node"
-      # install load sensor
-      sudo su - sge -c "scp -o StrictHostKeyChecking=no /tmp/lls.sh sge@${node}:${LOAD_SENSOR_DIR}"
+      echo "Adding load sensor and epilog on $node"
+      # copy load sensor and epilog
+      sudo su - sge -c "scp -o StrictHostKeyChecking=no /tmp/lls.sh $SCRIPT_DIR/epilog.sh sge@${node}:${LOAD_SENSOR_DIR}"
       ret=$?
       if [ $ret -ne 0 ]; then
-        echo "Error installing load sensor: scp exit code: $ret"
+        echo "Error installing load sensor or epilog: scp exit code: $ret"
       fi
       hf=/tmp/$node
       qconf -sconf $node > $hf
       echo "load_sensor $LOAD_SENSOR_DIR/lls.sh" >> $hf
       qconf -Mconf $hf
+      # add epilog
+      qconf -mattr queue epilog $LOAD_SENSOR_DIR/epilog.sh all.q
     else
       echo "UGE on $node is still in 'u' state"
       tmp+=($node)

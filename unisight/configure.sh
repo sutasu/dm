@@ -1,14 +1,29 @@
 #!/bin/bash
 # generate ssh key for sge user on installer node and
 # install puppet module responsible for installing sge user ssh key on compute nodes
+# add complexes
 
 SGE_USER_HOME=/home/sge
 COMPLEX_NAME=path
+SYNC_BACK_COMPLEX_NAME=sync_back
 
 clean() {
   rm -rf $SGE_USER_HOME/.ssh
   rm -f /etc/puppetlabs/code/environments/production/modules/sge_ssh_key/manifests/init.pp
   pkill -f "rsync --daemon"
+}
+
+add_complex() {
+  local nm=$1
+  COMPLEX_STR="$nm $nm RESTRING == YES NO NONE 0 NO"
+  TMP_COMPLEX_FILE=/tmp/complex
+  qconf -sc > $TMP_COMPLEX_FILE
+  if ! grep '$COMPLEX_STR' $TMP_COMPLEX_FILE ; then
+    echo "$COMPLEX_STR" >> $TMP_COMPLEX_FILE
+    qconf -Mc $TMP_COMPLEX_FILE
+  else
+    echo "Complex $nm is already present"
+  fi
 }
 
 FORCE=0
@@ -60,7 +75,7 @@ fi
 if true; then
   sudo yum install rsync
   cat > /etc/rsyncd.conf <<EOF
-[home]
+[HOME]
         path = /home
         comment = home
         read only = no
@@ -70,7 +85,7 @@ if true; then
         incoming chmod = a+w
         auth users = ugersync
         secrets file = /etc/rsyncd.secrets
-[shared]
+[SCRATCH]
         path = /tmp/sge_shared
         comment = shared
         read only = no
@@ -123,12 +138,7 @@ fi
 fi
 
 # add complex
-COMPLEX_STR="$COMPLEX_NAME $COMPLEX_NAME RESTRING == YES NO NONE 0 NO"
-TMP_COMPLEX_FILE=/tmp/complex
-qconf -sc > $TMP_COMPLEX_FILE
-if ! grep '$COMPLEX_STR' $TMP_COMPLEX_FILE ; then
-  echo "$COMPLEX_STR" >> $TMP_COMPLEX_FILE
-  qconf -Mc $TMP_COMPLEX_FILE
-else
-  echo "Complex $COMPLEX_NAME is already present"
-fi
+add_complex $COMPLEX_NAME
+add_complex $SYNC_BACK_COMPLEX_NAME
+
+

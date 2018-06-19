@@ -43,20 +43,17 @@ while [ $end = false ]; do
    # send load value arch
    #
    complex=
-   for d in $(find * -maxdepth 0 -mindepth 0); do
-      v=${d//_/\/}
-      if [ -z "$complex" ]; then
-         complex=$v
-      else
-         complex="${complex},${v}"
+   for d in $(find * -maxdepth 1 -mindepth 1); do
+      v=$(set -o pipefail; echo "$(basename "$d")" | base64 --decode)
+      if [ $? -eq 0 ]; then
+         if [ -z "$complex" ]; then
+            complex=$v
+         else
+            complex="${complex},${v}"
+         fi
       fi
    done
    echo "$HOST:$SGE_COMPLEX_NAME:$complex"
-   #$HOST:hash:$(find * -maxdepth 0 -mindepth 0 -printf "%f,")
-   #IN=$(echo *)
-   #if [ "$IN" != "*" ]; then
-   #  echo "$HOST:$SGE_COMPLEX_NAME:${IN// /,}"
-   #fi
 
    # ---------------------------------------- 
    # send mark for end of load report
