@@ -7,16 +7,16 @@ echo "Epilog $(date): begin"
 if [ ! -z "$SGE_DATA_OUT" ]; then
   if [ -d $SGE_DATA_OUT ]; then
 #    rsync -avzhe "ssh -o StrictHostKeyChecking=no" $SGE_DATA_OUT $SGE_O_LOGNAME@$SGE_O_HOST:$SGE_DATA_OUT_BACK/
-    module=
-    if [ -z "$SGE_DATA_OUT_BACK" ]; then
-      SGE_DATA_OUT_BACK=/home/$SGE_O_LOGNAME
-      module=$RSYNC_HOME_MODULE
-      echo "Epilog $(date): transfer data back: home used: $SGE_DATA_OUT_BACK"
+    ret=0
+    if [ ! -z "$SGE_DATA_OUT_BACK" ]; then
+      RSYNC_PASSWORD=ugersync rsync -rtv $SGE_STDERR_PATH $SGE_STDOUT_PATH $SGE_DATA_OUT rsync://ugersync@$SGE_O_HOST/$SGE_DATA_OUT_BACK/
+      ret=$?
     else
-      module=$RSYNC_SHARED_MODULE
+      RSYNC_PASSWORD=ugersync rsync -rtv $SGE_STDERR_PATH $SGE_STDOUT_PATH rsync://ugersync@$SGE_O_HOST/HOME/$SGE_O_LOGNAME/
+      ret=$?
+      echo "Epilog $(date): transfer data back: home used: $SGE_DATA_OUT_BACK"
     fi
-    RSYNC_PASSWORD=ugersync rsync -rtv $SGE_STDERR_PATH $SGE_STDOUT_PATH $SGE_DATA_OUT rsync://ugersync@$SGE_O_HOST/$module/$SGE_DATA_OUT_BACK/
-    if [ $? -ne 0 ]; then
+    if [ $ret -ne 0 ]; then
       echo "Epilog $(date): rsync error transferring data back from remote directory $SGE_DATA_OUT to local $SGE_DATA_OUT_BACK"
       echo "local directory $SGE_DATA_OUT_BACK has to exist and have write prmissions for all"
     fi

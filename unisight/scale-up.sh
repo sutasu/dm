@@ -16,7 +16,8 @@ HARDWARE_PROFILE=aws
 SOFTWARE_PROFILE=execd
 SLOTS_ON_EXECD=2
 LOCAL_PATH_COMPLEX=path
-SYNC_BACK_PATH_COMPLEX=sync_back
+#SYNC_BACK_PATH_COMPLEX=sync_back
+SYNC_BACK_ENV_VAR=SYNC_BACK
 SGE_LOCAL_STORAGE_ROOT=/tmp/sge_data
 LOAD_SENSOR_DIR=$SGE_ROOT/setup
 #RSYNC="sudo su - sge -c "
@@ -71,7 +72,7 @@ if [ $extra -gt 0 ]; then
 fi
 echo "new_nodes=$new_nodes"
 
-if false; then
+if true; then
   echo "Adding $new_nodes new nodes"
   ret=0
 else
@@ -96,8 +97,12 @@ for ((cnt=0; cnt<${#job_ids[@]}; ++cnt)) {
   job_id=${job_ids[$cnt]}
   user=${users[$cnt]}
 #for job_id in ${job_ids[@]}; do
-  hard_list=$(qstat -j $job_id | awk '/hard resource_list/ {print $3}')
+  jarr=($(qstat -j $job_id | awk -F': ' '/hard resource_list|env_list/ {print $2}'))
+  hard_list=${jarr[0]}
+  env_list=${jarr[1]}
+#  hard_list=$(qstat -j $job_id | awk '/hard resource_list/ {print $3}')
   hard_list_arr=(${hard_list//,/ })
+  env_list_arr=(${env_list//,/ })
   qalter_params=
   for hl in ${hard_list_arr[@]}; do
     if [[ $hl = "$LOCAL_PATH_COMPLEX"* ]]; then
@@ -110,20 +115,33 @@ for ((cnt=0; cnt<${#job_ids[@]}; ++cnt)) {
       paths_to+=($path_to)
       job_ids_with_data+=($job_id)
       qalter_params="$qalter_params -adds v SGE_DATA_IN $path_to"
-    elif [[ $hl = "$SYNC_BACK_PATH_COMPLEX"* ]]; then
-      echo "sync_back: $hl"
-      path="${hl#*=}"
+    fi
+  done
+  for el in ${env_list_arr[@]}; do
+    if [[ $el = "$SYNC_BACK_ENV_VAR="* ]]; then
+      echo "sync_back: $el"
+      path="${el#*=}"
       path_from="${path%%:*}"
       if [ ! -z "$path_from" ]; then
         qalter_params="$qalter_params -adds v SGE_DATA_OUT $path_from"
         path_to="${path##*:}"
-	if [ ! -z "$path_to" ]; then
-	  qalter_params="$qalter_params -adds v SGE_DATA_OUT_BACK $path_to"
+        if [[ $path_to = "HOME/"* ]]; then
+          to="${path_to#HOME/}"
+          path_to="HOME/$user/$to"
+        elif [[ $path_to = "SCRATCH/"* ]]; then
+          to="${path_to#SCRATCH/}"
+          path_to="SCRATCH/$to"
+        else
+          echo "HOME or SCRATCH specifier expected in $SYNC_BACK_ENV_VAR"
+          path_to=
+        fi
+        if [ ! -z "$path_to" ]; then
+          qalter_params="$qalter_params -adds v SGE_DATA_OUT_BACK $path_to"
         fi
       fi
-      qalter_params="$qalter_params -clears l_hard $SYNC_BACK_PATH_COMPLEX"
-    fi
-  done  
+#      qalter_params="$qalter_params -clears l_hard $SYNC_BACK_PATH_COMPLEX"
+    fi    
+  done
   if [ ! -z "$qalter_params" ]; then
     echo "qalter $qalter_params $job_id"
     qalter $qalter_params $job_id
