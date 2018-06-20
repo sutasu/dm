@@ -16,9 +16,12 @@ HARDWARE_PROFILE=aws
 SOFTWARE_PROFILE=execd
 SLOTS_ON_EXECD=2
 LOCAL_PATH_COMPLEX=path
+SHARED_PATH_COMPLEX=spath
 #SYNC_BACK_PATH_COMPLEX=sync_back
 SYNC_BACK_ENV_VAR=SYNC_BACK
+# local data storage on remote compute nodes
 SGE_LOCAL_STORAGE_ROOT=/tmp/sge_data
+SGE_SHARED_STORAGE_ROOT=/tmp/sge_shared
 LOAD_SENSOR_DIR=$SGE_ROOT/setup
 # local cluster shared directory
 SCRATCH_ROOT=/tmp/sge_shared
@@ -116,7 +119,21 @@ for ((cnt=0; cnt<${#job_ids[@]}; ++cnt)) {
       path_to=$SGE_LOCAL_STORAGE_ROOT/$user/$(echo $path | base64)
       paths_to+=($path_to)
       job_ids_with_data+=($job_id)
-      qalter_params="$qalter_params -adds v SGE_DATA_IN $path_to"
+      if [[ ! $env_list = *"SGE_DATA_IN"* ]; then
+        qalter_params="$qalter_params -adds v SGE_DATA_IN $path_to"
+      fi
+      break
+    elif [[ $hl = "$SHARED_PATH_COMPLEX"* ]]; then
+      path="${hl##*=\*}"
+      path="${path%%\*}"
+      paths_from+=($path)
+      path_to=$SGE_SHARED_STORAGE_ROOT/$user/$(echo $path | base64)
+      paths_to+=($path_to)
+      job_ids_with_data+=($job_id)
+      if [[ ! $env_list = *"SGE_DATA_IN"* ]; then
+        qalter_params="$qalter_params -adds v SGE_DATA_IN $path_to"
+      fi
+      break
     fi
   done
   for el in ${env_list_arr[@]}; do
@@ -141,8 +158,8 @@ for ((cnt=0; cnt<${#job_ids[@]}; ++cnt)) {
           qalter_params="$qalter_params -adds v SGE_DATA_OUT_BACK $path_to"
         fi
       fi
-#      qalter_params="$qalter_params -clears l_hard $SYNC_BACK_PATH_COMPLEX"
-    fi    
+      break
+    fi
   done
   if [ ! -z "$qalter_params" ]; then
     echo "qalter $qalter_params $job_id"
