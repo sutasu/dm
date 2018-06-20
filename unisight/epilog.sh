@@ -2,6 +2,7 @@
 set -x
 RSYNC_HOME_MODULE=HOME
 RSYNC_SHARED_MODULE=SCRATCH
+SCRATCH_ROOT=%%SCRATCH_ROOT%%
 echo "Epilog $(date): begin"
 
 if [ ! -z "$SGE_DATA_OUT" ]; then
@@ -9,7 +10,7 @@ if [ ! -z "$SGE_DATA_OUT" ]; then
 #    rsync -avzhe "ssh -o StrictHostKeyChecking=no" $SGE_DATA_OUT $SGE_O_LOGNAME@$SGE_O_HOST:$SGE_DATA_OUT_BACK/
     ret=0
     if [ ! -z "$SGE_DATA_OUT_BACK" ]; then
-      RSYNC_PASSWORD=ugersync rsync -rtv $SGE_STDERR_PATH $SGE_STDOUT_PATH $SGE_DATA_OUT rsync://ugersync@$SGE_O_HOST/$SGE_DATA_OUT_BACK/
+      RSYNC_PASSWORD=ugersync rsync --rsync-path="mkdir -p $SCRATCH_ROOT/$SGE_DATA_OUT_BACK && rsync" -rtv $SGE_STDERR_PATH $SGE_STDOUT_PATH $SGE_DATA_OUT rsync://ugersync@$SGE_O_HOST/$SGE_DATA_OUT_BACK/
       ret=$?
     else
       RSYNC_PASSWORD=ugersync rsync -rtv $SGE_STDERR_PATH $SGE_STDOUT_PATH rsync://ugersync@$SGE_O_HOST/HOME/$SGE_O_LOGNAME/
@@ -24,6 +25,6 @@ if [ ! -z "$SGE_DATA_OUT" ]; then
     echo "Epilog $(date): no output directory: $SGE_DATA_OUT"
   fi
 else
-  echo "Epilog $(date): no $SGE_DATA_OUT"
+  echo "Epilog $(date): no SGE_DATA_OUT"
 fi
 echo "Epilog $(date): end"

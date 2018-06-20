@@ -20,6 +20,8 @@ LOCAL_PATH_COMPLEX=path
 SYNC_BACK_ENV_VAR=SYNC_BACK
 SGE_LOCAL_STORAGE_ROOT=/tmp/sge_data
 LOAD_SENSOR_DIR=$SGE_ROOT/setup
+# local cluster shared directory
+SCRATCH_ROOT=/tmp/sge_shared
 #RSYNC="sudo su - sge -c "
 
 ASYNC=0
@@ -72,7 +74,7 @@ if [ $extra -gt 0 ]; then
 fi
 echo "new_nodes=$new_nodes"
 
-if true; then
+if false; then
   echo "Adding $new_nodes new nodes"
   ret=0
 else
@@ -210,6 +212,8 @@ for ((data_cnt=0; data_cnt<data_total; data_cnt++)) {
 # prepare load sensor
 sed "s|%%SGE_STORAGE_ROOT%%|$SGE_LOCAL_STORAGE_ROOT|; s|%%SGE_COMPLEX_NAME%%|$LOCAL_PATH_COMPLEX|" $SCRIPT_DIR/load-sensor.sh > /tmp/lls.sh
 chmod a+x /tmp/lls.sh
+sed "s|%%SCRATCH_ROOT%%|$SCRATCH_ROOT|" $SCRIPT_DIR/epilog.sh > /tmp/epilog.sh
+chmod a+x /tmp/epilog.sh
 
 # wait for UGE become available on compute nodes
 # install load sensor
@@ -238,7 +242,7 @@ for((cnt=0;cnt<max_cnt;++cnt)) {
     if ! qstat -f -qs u | grep $node_short ; then
       echo "Adding load sensor and epilog on $node"
       # copy load sensor and epilog
-      sudo su - sge -c "scp -o StrictHostKeyChecking=no /tmp/lls.sh $SCRIPT_DIR/epilog.sh sge@${node}:${LOAD_SENSOR_DIR}"
+      sudo su - sge -c "scp -o StrictHostKeyChecking=no /tmp/lls.sh /tmp/epilog.sh sge@${node}:${LOAD_SENSOR_DIR}"
       ret=$?
       if [ $ret -ne 0 ]; then
         echo "Error installing load sensor or epilog: scp exit code: $ret"
@@ -246,6 +250,8 @@ for((cnt=0;cnt<max_cnt;++cnt)) {
       hf=/tmp/$node
       qconf -sconf $node > $hf
       echo "load_sensor $LOAD_SENSOR_DIR/lls.sh" >> $hf
+      # temporary change load sensor period to short value
+      echo "load_report_time 5" >> $hf
       qconf -Mconf $hf
       # add epilog
       qconf -mattr queue epilog $LOAD_SENSOR_DIR/epilog.sh all.q
@@ -265,4 +271,15 @@ for((cnt=0;cnt<max_cnt;++cnt)) {
   fi
   sleep 1
 }
+
+# wait default load sensor reporting interval
+echo "Waiting default load report interval"
+sleep 40
+# change back to default by removing it
+for node in ${new_nodes[@]}; do
+  hf=/tmp/$node
+  qconf -sconf $node > $hf
+  sed -i '/^load_report_time[ \t]*5.*/ d' $hf
+  qconf -Mconf $hf
+done
 
