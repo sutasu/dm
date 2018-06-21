@@ -3,9 +3,15 @@
 # install puppet module responsible for installing sge user ssh key on compute nodes
 # add complexes
 
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 SGE_USER_HOME=/home/sge
-COMPLEX_NAME=path
+LOCAL_PATH_COMPLEX=path
 SYNC_BACK_COMPLEX_NAME=sync_back
+LOAD_SENSOR_DIR=$SGE_ROOT/setup
+SGE_LOCAL_STORAGE_ROOT=/tmp/sge_data
+SCRATCH_ROOT=/tmp/sge_shared
+RSYNCD_HOST=$(hostname)
+#RSYNCD_HOST=%%RSYNCD_HOST%%
 
 clean() {
   rm -rf $SGE_USER_HOME/.ssh
@@ -24,6 +30,33 @@ add_complex() {
   else
     echo "Complex $nm is already present"
   fi
+}
+
+add_pro_epi_ls() {
+  local nodes="$@"
+  # prepare load sensor
+  sed "s|%%SGE_STORAGE_ROOT%%|$SGE_LOCAL_STORAGE_ROOT|; s|%%SGE_COMPLEX_NAME%%|$LOCAL_PATH_COMPLEX|" $SCRIPT_DIR/load-sensor.sh > /tmp/lls.sh
+  chmod a+x /tmp/lls.sh
+  sed "s|%%RSYNCD_HOST%%|$RSYNCD_HOST|; s|%%SCRATCH_ROOT%%|$SCRATCH_ROOT|" $SCRIPT_DIR/epilog.sh > /tmp/epilog.sh
+  chmod a+x /tmp/epilog.sh
+  sed "s|%%RSYNCD_HOST%%|$RSYNCD_HOST|; s|%%SCRATCH_ROOT%%|$SCRATCH_ROOT|" $SCRIPT_DIR/prolog.sh > /tmp/prolog.sh
+  chmod a+x /tmp/prolog.sh
+  for n in $nodes; do
+    sudo su - sge -c "scp -o StrictHostKeyChecking=no /tmp/lls.sh /tmp/epilog.sh /tmp/prolog.sh sge@${n}:${LOAD_SENSOR_DIR}"
+    sudo su - sge -c "ssh $n 'bash -c \"mkdir -p $SCRATCH_ROOT; chmod a+wx $SCRATCH_ROOT; mkdir -p $SGE_LOCAL_STORAGE_ROOT; chmod a+wx $SGE_LOCAL_STORAGE_ROOT\"'"
+  done
+}
+
+add_pro_epi_log() {
+  local pro_epi=$1
+  local sf=$pro_epi.sh
+  local tmpsf=/tmp/$sf
+  sed "s|%%RSYNCD_HOST%%|$RSYNCD_HOST|; s|%%SCRATCH_ROOT%%|$SCRATCH_ROOT|" $SCRIPT_DIR/$sf > $tmpsf
+  chmod a+x $tmpsf
+  for n in $(qconf -sel); do
+    sudo su - sge -c "scp -o StrictHostKeyChecking=no $tmpsf sge@${n}:${LOAD_SENSOR_DIR}"
+  done
+  qconf -mattr queue $pro_epi $LOAD_SENSOR_DIR/$sf all.q
 }
 
 FORCE=0
@@ -79,7 +112,7 @@ if true; then
         path = /home
         comment = home
         read only = no
-        write only = yes
+        write only = no
         uid = $(id -u sge)
         gid = $(id -g sge)
         incoming chmod = a+w
@@ -89,7 +122,7 @@ if true; then
         path = /tmp/sge_shared
         comment = shared
         read only = no
-        write only = yes
+        write only = no
         uid = $(id -u sge)
         gid = $(id -g sge)
         incoming chmod = a+w
@@ -138,7 +171,9 @@ fi
 fi
 
 # add complex
-add_complex $COMPLEX_NAME
+add_complex $LOCAL_PATH_COMPLEX
 #add_complex $SYNC_BACK_COMPLEX_NAME
+# add prolog epilog and load sensor to existing nodes
+add_pro_epi_ls $(qconf -sel)
 
 

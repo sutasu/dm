@@ -25,6 +25,8 @@ SGE_SHARED_STORAGE_ROOT=/tmp/sge_shared
 LOAD_SENSOR_DIR=$SGE_ROOT/setup
 # local cluster shared directory
 SCRATCH_ROOT=/tmp/sge_shared
+RSYNCD_HOST=$(hostname)
+#RSYNCD_HOST=%%RSYNCD_HOST%%
 #RSYNC="sudo su - sge -c "
 
 ASYNC=0
@@ -102,35 +104,56 @@ for ((cnt=0; cnt<${#job_ids[@]}; ++cnt)) {
   job_id=${job_ids[$cnt]}
   user=${users[$cnt]}
 #for job_id in ${job_ids[@]}; do
-  jarr=($(qstat -j $job_id | awk -F': ' '/hard resource_list|env_list/ {print $2}'))
-  hard_list=${jarr[0]}
+#  jarr=($(qstat -j $job_id | awk -F': ' '/hard resource_list|env_list/ {print $2}'))
+  # expects soft resource list to be there (as summlies by qsub-wrapper.sh)
+  jarr=($(qstat -j $job_id | awk -F': ' '/soft resource_list|env_list/ {print $2}'))
+  resource_list=${jarr[0]}
   env_list=${jarr[1]}
-#  hard_list=$(qstat -j $job_id | awk '/hard resource_list/ {print $3}')
-  hard_list_arr=(${hard_list//,/ })
+  resource_list_arr=(${resource_list//,/ })
   env_list_arr=(${env_list//,/ })
   qalter_params=
-  for hl in ${hard_list_arr[@]}; do
+  for hl in ${resource_list_arr[@]}; do
     if [[ $hl = "$LOCAL_PATH_COMPLEX"* ]]; then
 #      path="${hl##*=}"
+      qalter_params="$qalter_params -clears l_soft $LOCAL_PATH_COMPLEX -adds l_hard $LOCAL_PATH_COMPLEX ${hl##*=}"
       path="${hl##*=\*}"
       path="${path%%\*}"
+      t=${env_list#*SGE_DATA_IN_SRC_STORAGE=}
+      t=${t%%,*}
+      if [ "$t" == "HOME" ]; then
+        path="$(eval echo "~$user")/$path"
+      elif [ "$t" == "SCRATCH" ]; then
+        path="$SCRATCH_ROOT/$path"
+      else
+        echo "Unexpected type: $t"
+      fi
       paths_from+=($path)
 #      path_to="${path//\//_}"
       path_to=$SGE_LOCAL_STORAGE_ROOT/$user/$(echo $path | base64)
       paths_to+=($path_to)
       job_ids_with_data+=($job_id)
-      if [[ ! $env_list = *"SGE_DATA_IN"* ]; then
+      if [[ ! $env_list = *"SGE_DATA_IN"* ]]; then
         qalter_params="$qalter_params -adds v SGE_DATA_IN $path_to"
       fi
       break
     elif [[ $hl = "$SHARED_PATH_COMPLEX"* ]]; then
+      qalter_params="$qalter_params -clears l_soft $SHARED_PATH_COMPLEX -adds l_hard $SHARED_PATH_COMPLEX ${hl##*=}"
       path="${hl##*=\*}"
       path="${path%%\*}"
+      t=${env_list#*SGE_DATA_IN_SRC_STORAGE=}
+      t=${t%%,*}
+      if [ "$t" == "HOME" ]; then
+        path="$(eval echo "~$user")/$path"
+      elif [ "$t" == "SCRATCH" ]; then
+        path="$SCRATCH_ROOT/$path"
+      else
+        echo "Unexpected type: $t"
+      fi
       paths_from+=($path)
       path_to=$SGE_SHARED_STORAGE_ROOT/$user/$(echo $path | base64)
       paths_to+=($path_to)
       job_ids_with_data+=($job_id)
-      if [[ ! $env_list = *"SGE_DATA_IN"* ]; then
+      if [[ ! $env_list = *"SGE_DATA_IN"* ]]; then
         qalter_params="$qalter_params -adds v SGE_DATA_IN $path_to"
       fi
       break
@@ -226,16 +249,21 @@ for ((data_cnt=0; data_cnt<data_total; data_cnt++)) {
   node_cnt=$((node_cnt + 1))
 }
 
-# prepare load sensor
-sed "s|%%SGE_STORAGE_ROOT%%|$SGE_LOCAL_STORAGE_ROOT|; s|%%SGE_COMPLEX_NAME%%|$LOCAL_PATH_COMPLEX|" $SCRIPT_DIR/load-sensor.sh > /tmp/lls.sh
+# prepare load sensors and prolog/epilog
+sed "s|%%SGE_STORAGE_ROOT%%|$SGE_LOCAL_STORAGE_ROOT|; s|%%SGE_COMPLEX_NAME%%|$LOCAL_PATH_COMPLEX|; s|%%DEPTH%%|1|" $SCRIPT_DIR/load-sensor.sh > /tmp/lls.sh
 chmod a+x /tmp/lls.sh
-sed "s|%%SCRATCH_ROOT%%|$SCRATCH_ROOT|" $SCRIPT_DIR/epilog.sh > /tmp/epilog.sh
+sed "s|%%SGE_STORAGE_ROOT%%|$SCRATCH_ROOT|; s|%%SGE_COMPLEX_NAME%%|$SHARED_PATH_COMPLEX|; s|%%DEPTH%%|0|" $SCRIPT_DIR/load-sensor.sh > /tmp/sls.sh
+chmod a+x /tmp/sls.sh
+sed "s|%%RSYNCD_HOST%%|$RSYNCD_HOST|; s|%%SCRATCH_ROOT%%|$SCRATCH_ROOT|" $SCRIPT_DIR/epilog.sh > /tmp/epilog.sh
 chmod a+x /tmp/epilog.sh
+sed "s|%%RSYNCD_HOST%%|$RSYNCD_HOST|; s|%%SCRATCH_ROOT%%|$SCRATCH_ROOT|" $SCRIPT_DIR/prolog.sh > /tmp/prolog.sh
+chmod a+x /tmp/prolog.sh
 
 # wait for UGE become available on compute nodes
 # install load sensor
 max_cnt=100
-max_err_cnt=$((10 * new_node_total))
+max_err_cnt=120
+#max_err_cnt=$((10 * new_nodes_total))
 err_cnt=0
 new_nodes_copy=("${new_nodes[@]}")
 for((cnt=0;cnt<max_cnt;++cnt)) { 
@@ -259,10 +287,10 @@ for((cnt=0;cnt<max_cnt;++cnt)) {
     if ! qstat -f -qs u | grep $node_short ; then
       echo "Adding load sensor and epilog on $node"
       # copy load sensor and epilog
-      sudo su - sge -c "scp -o StrictHostKeyChecking=no /tmp/lls.sh /tmp/epilog.sh sge@${node}:${LOAD_SENSOR_DIR}"
+      sudo su - sge -c "scp -o StrictHostKeyChecking=no /tmp/lls.sh /tmp/sls.sh /tmp/epilog.sh /tmp/prolog.sh sge@${node}:${LOAD_SENSOR_DIR}"
       ret=$?
       if [ $ret -ne 0 ]; then
-        echo "Error installing load sensor or epilog: scp exit code: $ret"
+        echo "Error installing load sensor, prolog or epilog: scp exit code: $ret"
       fi
       hf=/tmp/$node
       qconf -sconf $node > $hf
@@ -272,6 +300,7 @@ for((cnt=0;cnt<max_cnt;++cnt)) {
       qconf -Mconf $hf
       # add epilog
       qconf -mattr queue epilog $LOAD_SENSOR_DIR/epilog.sh all.q
+      qconf -mattr queue prolog $LOAD_SENSOR_DIR/prolog.sh all.q
     else
       echo "UGE on $node is still in 'u' state"
       tmp+=($node)

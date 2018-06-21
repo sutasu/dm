@@ -23,9 +23,11 @@ while [ $# -gt 0 ]; do
     Usage
     exit 0
     ;;
-  "-src-dir")
+  "-src")
     shift
-    src_path="$1"
+    SGE_DATA_IN_SRC_STORAGE=${1%%/*}
+    SGE_DATA_IN_SRC=${1#*/}
+    src_path=$SGE_DATA_IN_SRC
     shift
     ((done++))
     ;;
@@ -76,24 +78,22 @@ fi
 if [ "$local_shared" == "LOCAL" ]; then
   complex=$LOCAL_PATH_COMPLEX
   export SGE_DATA_IN="$SGE_LOCAL_STORAGE_ROOT/$USER/$(echo $src_path | base64)"
-  SGE_DATA_INT_SRC_STORAGE=
-  SGE_DATA_IN_SRC=$src_path
-elif [ "$local_shared" == "SHARED" ]; then
+elif [ "$local_shared" == "SCRATCH" ]; then
   complex=$SHARED_PATH_COMPLEX
   export SGE_DATA_IN="$SGE_SHARED_STORAGE_ROOT/$USER/$(echo $src_path | base64)"
   SGE_DATA_IN_SRC=$src_path
 else
-  echo "Incorrect -dest parameter: $local_shared. Should be LOCAL or SHARED"
+  echo "Incorrect -dest parameter: $local_shared. Should be LOCAL or SCRATCH"
   exit 1
 fi
 
-echo "V_PARAMS=${V_PARAMS[@]}"
-
 qsub -v SGE_DATA_IN=$SGE_DATA_IN \
      -v SGE_DATA_IN_SRC=$SGE_DATA_IN_SRC \
-     -v SGE_DATA_INT_SRC_STORAGE=$SGE_DATA_INT_SRC_STORAGE \
+     -v SGE_DATA_IN_SRC_STORAGE=$SGE_DATA_IN_SRC_STORAGE \
      -v SGE_DATA_OUT=$SGE_DATA_OUT \
      -v SGE_DATA_OUT_BACK=$SGE_DATA_OUT_BACK \
      -v SGE_DATA_OUT_BACK_STORAGE=$SGE_DATA_OUT_BACK_STORAGE \
-     "$@" \
-     -hard -l $complex="*${src_path}*"
+     -soft -l $complex="*${src_path}*" -hard \
+     "$@"
+
+#     -hard -l $complex="*${src_path}*"
