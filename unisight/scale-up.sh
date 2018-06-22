@@ -121,13 +121,13 @@ for ((cnt=0; cnt<${#job_ids[@]}; ++cnt)) {
       t=${env_list#*SGE_DATA_IN_SRC_STORAGE=}
       t=${t%%,*}
       if [ "$t" == "HOME" ]; then
-        path="$(eval echo "~$user")/$path"
+        lpath="$(eval echo "~$user")/$path"
       elif [ "$t" == "SCRATCH" ]; then
-        path="$SCRATCH_ROOT/$path"
+        lpath="$SCRATCH_ROOT/$path"
       else
         echo "Unexpected type: $t"
       fi
-      paths_from+=($path)
+      paths_from+=($lpath)
 #      path_to="${path//\//_}"
       path_to=$SGE_LOCAL_STORAGE_ROOT/$user/$(echo $path | base64)
       paths_to+=($path_to)
@@ -143,13 +143,13 @@ for ((cnt=0; cnt<${#job_ids[@]}; ++cnt)) {
       t=${env_list#*SGE_DATA_IN_SRC_STORAGE=}
       t=${t%%,*}
       if [ "$t" == "HOME" ]; then
-        path="$(eval echo "~$user")/$path"
+        lpath="$(eval echo "~$user")/$path"
       elif [ "$t" == "SCRATCH" ]; then
-        path="$SCRATCH_ROOT/$path"
+        lpath="$SCRATCH_ROOT/$path"
       else
         echo "Unexpected type: $t"
       fi
-      paths_from+=($path)
+      paths_from+=($lpath)
       path_to=$SGE_SHARED_STORAGE_ROOT/$user/$(echo $path | base64)
       paths_to+=($path_to)
       job_ids_with_data+=($job_id)
@@ -238,8 +238,10 @@ for ((data_cnt=0; data_cnt<data_total; data_cnt++)) {
     RSYNC_PIDS+=($!)
   else
     echo "Transferring data from $data_path to sge@$node:$path_to/"
-    sudo su - sge -c "rsync -avzhe \"ssh -o StrictHostKeyChecking=no\" \
-      --rsync-path=\"mkdir -p $path_to && rsync\" \
+    #cm="Dgo+s,ugo+w,Fgo+w,+X"
+    cm="ugo+w"
+    sudo su - sge -c "rsync --no-p --no-g --chmod=$cm -avzhe \"ssh -o StrictHostKeyChecking=no\" \
+      --rsync-path=\"mkdir -p $path_to && chmod a+rwx $(dirname $path_to) && rsync\" \
       $data_path sge@$node:$path_to/"
     ret=$?
     if [ $ret -ne 0 ]; then
