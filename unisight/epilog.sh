@@ -14,12 +14,12 @@ if [ ! -z "$SGE_DATA_OUT" ]; then
       if [ "$SGE_DATA_OUT_BACK_STORAGE" == "SCRATCH" ]; then
         RSYNC_PASSWORD=ugersync rsync \
           --rsync-path="mkdir -p $SCRATCH_ROOT/$SGE_DATA_OUT_BACK && rsync" \
-          -rtv $SGE_STDERR_PATH $SGE_STDOUT_PATH $SGE_DATA_OUT \
+          -rtv $SGE_STDERR_PATH $SGE_STDOUT_PATH $SGE_DATA_OUT/* \
           rsync://ugersync@$RSYNCD_HOST/SCRATCH/$SGE_DATA_OUT_BACK/
         ret=$?
       elif [ "$SGE_DATA_OUT_BACK_STORAGE" == "HOME" ]; then
         RSYNC_PASSWORD=ugersync rsync -rtv \
-          $SGE_STDERR_PATH $SGE_STDOUT_PATH $SGE_DATA_OUT \
+          $SGE_STDERR_PATH $SGE_STDOUT_PATH $SGE_DATA_OUT/* \
           rsync://ugersync@$RSYNCD_HOST/HOME/$SGE_O_LOGNAME/$SGE_DATA_OUT_BACK/
         ret=$?
       else
@@ -27,7 +27,7 @@ if [ ! -z "$SGE_DATA_OUT" ]; then
       fi
     else
       RSYNC_PASSWORD=ugersync rsync -rtv \
-        $SGE_STDERR_PATH $SGE_STDOUT_PATH \
+        $SGE_STDERR_PATH $SGE_STDOUT_PATH/* \
         rsync://ugersync@$RSYNCD_HOST/HOME/$SGE_O_LOGNAME/
       ret=$?
       echo "Epilog $(date): transfer data back: home used: $SGE_DATA_OUT_BACK"

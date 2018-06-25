@@ -13,14 +13,14 @@ if [ ! -z "$SGE_DATA_IN" ]; then
       mkdir -p $SGE_DATA_IN
       chmod a+wx $SGE_DATA_IN
       RSYNC_PASSWORD=ugersync rsync -rtv \
-        rsync://ugersync@$RSYNCD_HOST/HOME/$SGE_O_LOGNAME/$SGE_DATA_IN_SRC \
+        rsync://ugersync@$RSYNCD_HOST/HOME/$SGE_O_LOGNAME/$SGE_DATA_IN_SRC/* \
         $SGE_DATA_IN/
       ret=$?
     elif [ "$SGE_DATA_IN_SRC_STORAGE" == "SCRATCH" ]; then
       mkdir -p $SGE_DATA_IN
       chmod a+wx $SGE_DATA_IN
       RSYNC_PASSWORD=ugersync rsync \
-        -rtv rsync://ugersync@$RSYNCD_HOST/SCRATCH/$SGE_DATA_IN_SRC \
+        -rtv rsync://ugersync@$RSYNCD_HOST/SCRATCH/$SGE_DATA_IN_SRC/* \
         $SGE_DATA_IN/
       ret=$?
     else

@@ -112,10 +112,13 @@ for ((cnt=0; cnt<${#job_ids[@]}; ++cnt)) {
   resource_list_arr=(${resource_list//,/ })
   env_list_arr=(${env_list//,/ })
   qalter_params=
+  qalter_add_hard=
   for hl in ${resource_list_arr[@]}; do
     if [[ $hl = "$LOCAL_PATH_COMPLEX"* ]]; then
 #      path="${hl##*=}"
-      qalter_params="$qalter_params -clears l_soft $LOCAL_PATH_COMPLEX -adds l_hard $LOCAL_PATH_COMPLEX ${hl##*=}"
+      qalter_params="$qalter_params -clears l_soft $LOCAL_PATH_COMPLEX"
+      qalter_add_hard_key="-adds l_hard $LOCAL_PATH_COMPLEX"
+      qalter_add_hard_val="${hl##*=}"
       path="${hl##*=\*}"
       path="${path%%\*}"
       t=${env_list#*SGE_DATA_IN_SRC_STORAGE=}
@@ -137,7 +140,9 @@ for ((cnt=0; cnt<${#job_ids[@]}; ++cnt)) {
       fi
       break
     elif [[ $hl = "$SHARED_PATH_COMPLEX"* ]]; then
-      qalter_params="$qalter_params -clears l_soft $SHARED_PATH_COMPLEX -adds l_hard $SHARED_PATH_COMPLEX ${hl##*=}"
+      qalter_params="$qalter_params -clears l_soft $SHARED_PATH_COMPLEX"
+      qalter_add_hard_key="-adds l_hard $SHARED_PATH_COMPLEX"
+      qalter_add_hard_val="${hl##*=}"
       path="${hl##*=\*}"
       path="${path%%\*}"
       t=${env_list#*SGE_DATA_IN_SRC_STORAGE=}
@@ -184,6 +189,9 @@ for ((cnt=0; cnt<${#job_ids[@]}; ++cnt)) {
       break
     fi
   done
+  if [ ! -z "$qalter_add_hard_key" ]; then
+    qalter $qalter_add_hard_key "$qalter_add_hard_val" $job_id
+  fi
   if [ ! -z "$qalter_params" ]; then
     echo "qalter $qalter_params $job_id"
     qalter $qalter_params $job_id
@@ -242,7 +250,7 @@ for ((data_cnt=0; data_cnt<data_total; data_cnt++)) {
     cm="ugo+w"
     sudo su - sge -c "rsync --no-p --no-g --chmod=$cm -avzhe \"ssh -o StrictHostKeyChecking=no\" \
       --rsync-path=\"mkdir -p $path_to && chmod a+rwx $(dirname $path_to) && rsync\" \
-      $data_path sge@$node:$path_to/"
+      $data_path/* sge@$node:$path_to/"
     ret=$?
     if [ $ret -ne 0 ]; then
       echo "error code from rsync: $ret"
